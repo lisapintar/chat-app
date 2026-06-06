@@ -11,16 +11,9 @@ return Application::configure(basePath: dirname(__DIR__))
         channels: __DIR__.'/../routes/channels.php',
         health: '/up',
     )
-    ->withMiddleware(function (Middleware $middleware) {
-         $middleware->validateCsrfTokens(except: [
-        'api/send-message',
-        'api/update-presence',
-        'api/messages/*',
-        'api/users',
-        'api/online-users',
-        'api/*',
-    ]);
+    ->withMiddleware(function (Middleware $middleware): void {
+        //
     })
-    ->withExceptions(function (Exceptions $exceptions) {
+    ->withExceptions(function (Exceptions $exceptions): void {
         //
     })->create();

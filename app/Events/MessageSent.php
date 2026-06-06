@@ -3,62 +3,65 @@
 namespace App\Events;
 
 use App\Models\Message;
-use App\Models\User;
+use Illuminate\Broadcasting\Channel;
 use Illuminate\Broadcasting\InteractsWithSockets;
+use Illuminate\Broadcasting\PresenceChannel;
 use Illuminate\Broadcasting\PrivateChannel;
-use Illuminate\Contracts\Broadcasting\ShouldBroadcast;
+use Illuminate\Contracts\Broadcasting\ShouldBroadcastNow;
 use Illuminate\Foundation\Events\Dispatchable;
 use Illuminate\Queue\SerializesModels;
 
-class MessageSent implements ShouldBroadcast
+class MessageSent implements ShouldBroadcastNow
 {
     use Dispatchable, InteractsWithSockets, SerializesModels;
 
-    /**
-     * Create a new event instance.
-     */
-    public function __construct(
-        public Message $message,
-        public User $sender
-    ) {}
+    public Message $message;
 
-    /**
-     * Get the channels the event should broadcast on.
-     *
-     * @return array<int, \Illuminate\Broadcasting\Channel>
-     */
-    public function broadcastOn(): array
+    public function __construct(Message $message)
     {
-        // Mengurutkan ID pengirim & penerima agar nama channel selalu konsisten
-        $ids = collect([$this->message->sender_id, $this->message->receiver_id])->sort()->values();
-
-        return [
-            new PrivateChannel('chat.' . $ids[0] . '.' . $ids[1]),
-        ];
+        // Load relasi sender supaya tersedia di broadcastWith
+        $this->message = $message->load('sender');
     }
 
     /**
-     * Get the data to broadcast.
-     *
-     * @return array<string, mixed>
+     * Channel tempat event ini di-broadcast.
+     * - Private chat  → private-chat.{userId1}-{userId2}  (ID kecil selalu duluan)
+     * - Group chat    → presence-group.{groupId}
      */
+    public function broadcastOn(): array
+    {
+        if ($this->message->group_id) {
+            // Gunakan PrivateChannel untuk broadcast pesan group
+            // lebih reliable daripada PresenceChannel
+            return [new PrivateChannel('group.' . $this->message->group_id)];
+        }
+
+        // Urutkan ID supaya nama channel konsisten (misal: chat.1-3, bukan chat.3-1)
+        $ids = [$this->message->sender_id, $this->message->receiver_id];
+        sort($ids);
+
+        return [new PrivateChannel('chat.' . implode('-', $ids))];
+    }
+
+    public function broadcastAs(): string
+    {
+        return 'message.sent';
+    }
+
     public function broadcastWith(): array
     {
         return [
             'id'          => $this->message->id,
-            'content'     => $this->message->content,
+            'body'        => $this->message->body,
             'sender_id'   => $this->message->sender_id,
             'receiver_id' => $this->message->receiver_id,
-            'sender_name' => $this->sender->name,
-            'created_at'  => $this->message->created_at->toISOString(),
+            'group_id'    => $this->message->group_id,
+            'created_at'  => $this->message->created_at->format('H:i'),
+            'sender'      => [
+                'id'       => $this->message->sender->id,
+                'name'     => $this->message->sender->name,
+                'initials' => $this->message->sender->initials,
+            ],
         ];
-    }
-
-    /**
-     * The event's broadcast name.
-     */
-    public function broadcastAs(): string
-    {
-        return 'message.sent';
     }
 }

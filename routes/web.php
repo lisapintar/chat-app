@@ -1,39 +1,35 @@
 <?php
 
-use Illuminate\Support\Facades\Route;
+use App\Http\Controllers\Auth\LoginController;
+use App\Http\Controllers\Auth\RegisterController;
 use App\Http\Controllers\ChatController;
+use Illuminate\Support\Facades\Route;
 
-Route::get('/', function () {
-    if (auth()->check()) {
-        return redirect('/chat');
-    }
-    return redirect('/login');
+// ─── Auth routes ────────────────────────────────────────────────────────────
+Route::middleware('guest')->group(function () {
+    Route::get('/login',    [LoginController::class,    'showLogin'])->name('login');
+    Route::post('/login',   [LoginController::class,    'login']);
+    Route::get('/register', [RegisterController::class, 'showRegister'])->name('register');
+    Route::post('/register',[RegisterController::class, 'register']);
 });
 
-Route::middleware(['auth'])->group(function () {
-    Route::get('/chat', [ChatController::class, 'index'])->name('chat');
-    Route::get('/api/users', [ChatController::class, 'getUsers']);
-    Route::get('/api/messages/{userId}', [ChatController::class, 'getMessages']);
-    Route::post('/api/send-message', [ChatController::class, 'sendMessage']);
-    Route::post('/api/update-presence', [ChatController::class, 'updatePresence']);
-    Route::get('/api/online-users', [ChatController::class, 'getOnlineUsers']);
+Route::post('/logout', [LoginController::class, 'logout'])
+     ->middleware('auth')
+     ->name('logout');
+
+// ─── Chat routes (harus login) ───────────────────────────────────────────────
+Route::middleware('auth')->group(function () {
+    Route::get('/', [ChatController::class, 'index'])->name('chat.index');
+
+    // AJAX endpoints
+    Route::get('/messages/private/{user}',  [ChatController::class, 'getPrivateMessages'])->name('chat.private');
+    Route::get('/messages/group/{group}',   [ChatController::class, 'getGroupMessages'])->name('chat.group');
+    Route::post('/messages/send',           [ChatController::class, 'sendMessage'])->name('chat.send');
+    Route::post('/typing',                  [ChatController::class, 'typing'])->name('chat.typing');
+    Route::post('/groups/create',           [ChatController::class, 'createGroup'])->name('group.create');
+    Route::get('/unread-counts',            [ChatController::class, 'unreadCounts'])->name('chat.unread');
+
+    // Presence endpoints
+    Route::post('/set-offline',  [ChatController::class, 'setOffline'])->name('chat.offline');
+    Route::post('/heartbeat',    [ChatController::class, 'heartbeat'])->name('chat.heartbeat');
 });
-
-Route::middleware(['auth'])->group(function () {
-    Route::get('/chat', [ChatController::class, 'index'])->name('chat');
-
-    // Private chat
-    Route::get('/api/users', [ChatController::class, 'getUsers']);
-    Route::get('/api/messages/{userId}', [ChatController::class, 'getMessages']);
-    Route::post('/api/send-message', [ChatController::class, 'sendMessage']);
-    Route::post('/api/update-presence', [ChatController::class, 'updatePresence']);
-    Route::get('/api/online-users', [ChatController::class, 'getOnlineUsers']);
-
-    // Group chat
-    Route::get('/api/groups', [ChatController::class, 'getGroups']);
-    Route::post('/api/groups', [ChatController::class, 'createGroup']);
-    Route::get('/api/groups/{groupId}/messages', [ChatController::class, 'getGroupMessages']);
-    Route::post('/api/groups/send-message', [ChatController::class, 'sendGroupMessage']);
-});
-
-require __DIR__.'/auth.php';

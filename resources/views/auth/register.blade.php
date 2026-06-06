@@ -1,52 +1,130 @@
-<x-guest-layout>
-    <form method="POST" action="{{ route('register') }}">
-        @csrf
-
-        <!-- Name -->
-        <div>
-            <x-input-label for="name" :value="__('Name')" />
-            <x-text-input id="name" class="block mt-1 w-full" type="text" name="name" :value="old('name')" required autofocus autocomplete="name" />
-            <x-input-error :messages="$errors->get('name')" class="mt-2" />
+<!DOCTYPE html>
+<html lang="id">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Daftar — Chat App</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            background: #f0f0f0;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            min-height: 100vh;
+            font-family: 'Segoe UI', system-ui, sans-serif;
+        }
+        .card {
+            background: #ffffff;
+            border: 1px solid #aaaaaa;
+            border-radius: 4px;
+            padding: 32px;
+            width: 100%;
+            max-width: 360px;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+        }
+        .logo {
+            text-align: center;
+            margin-bottom: 24px;
+            border-bottom: 1px solid #eeeeee;
+            padding-bottom: 20px;
+        }
+        .logo h1 { color: #111111; font-size: 20px; font-weight: 700; }
+        .logo p  { color: #666666; font-size: 12px; margin-top: 4px; }
+        .form-group { margin-bottom: 14px; }
+        label {
+            display: block;
+            color: #333333;
+            font-size: 12px;
+            font-weight: 600;
+            margin-bottom: 5px;
+        }
+        input[type="email"],
+        input[type="password"],
+        input[type="text"] {
+            width: 100%;
+            background: #ffffff;
+            border: 1px solid #aaaaaa;
+            border-radius: 3px;
+            padding: 9px 12px;
+            color: #111111;
+            font-size: 13px;
+            outline: none;
+        }
+        input:focus { border-color: #111111; }
+        .error { color: #cc0000; font-size: 12px; margin-top: 4px; }
+        .btn {
+            width: 100%;
+            background: #111111;
+            color: #ffffff;
+            border: none;
+            border-radius: 3px;
+            padding: 10px;
+            font-size: 13px;
+            font-weight: 600;
+            cursor: pointer;
+            margin-top: 6px;
+        }
+        .btn:hover { background: #333333; }
+        .footer-link {
+            text-align: center;
+            margin-top: 20px;
+            color: #666666;
+            font-size: 12px;
+            padding-top: 16px;
+            border-top: 1px solid #eeeeee;
+        }
+        .footer-link a { color: #111111; font-weight: 600; text-decoration: none; }
+        .footer-link a:hover { text-decoration: underline; }
+    </style>
+</head>
+<body>
+    <div class="card">
+        <div class="logo">
+            <h1>Chat App</h1>
+            <p>Buat akun baru</p>
         </div>
 
-        <!-- Email Address -->
-        <div class="mt-4">
-            <x-input-label for="email" :value="__('Email')" />
-            <x-text-input id="email" class="block mt-1 w-full" type="email" name="email" :value="old('email')" required autocomplete="username" />
-            <x-input-error :messages="$errors->get('email')" class="mt-2" />
+        <form method="POST" action="{{ route('register') }}">
+            @csrf
+            <div class="form-group">
+                <label for="name">Nama Lengkap</label>
+                <input type="text" id="name" name="name"
+                       value="{{ old('name') }}"
+                       placeholder="Ahmad Kurniawan" required autofocus>
+                @error('name')
+                    <p class="error">{{ $message }}</p>
+                @enderror
+            </div>
+            <div class="form-group">
+                <label for="email">Email</label>
+                <input type="email" id="email" name="email"
+                       value="{{ old('email') }}"
+                       placeholder="nama@email.com" required>
+                @error('email')
+                    <p class="error">{{ $message }}</p>
+                @enderror
+            </div>
+            <div class="form-group">
+                <label for="password">Password</label>
+                <input type="password" id="password" name="password"
+                       placeholder="Min. 8 karakter" required>
+                @error('password')
+                    <p class="error">{{ $message }}</p>
+                @enderror
+            </div>
+            <div class="form-group">
+                <label for="password_confirmation">Konfirmasi Password</label>
+                <input type="password" id="password_confirmation"
+                       name="password_confirmation"
+                       placeholder="Ulangi password" required>
+            </div>
+            <button type="submit" class="btn">Daftar</button>
+        </form>
+
+        <div class="footer-link">
+            Sudah punya akun? <a href="{{ route('login') }}">Masuk</a>
         </div>
-
-        <!-- Password -->
-        <div class="mt-4">
-            <x-input-label for="password" :value="__('Password')" />
-
-            <x-text-input id="password" class="block mt-1 w-full"
-                            type="password"
-                            name="password"
-                            required autocomplete="new-password" />
-
-            <x-input-error :messages="$errors->get('password')" class="mt-2" />
-        </div>
-
-        <!-- Confirm Password -->
-        <div class="mt-4">
-            <x-input-label for="password_confirmation" :value="__('Confirm Password')" />
-
-            <x-text-input id="password_confirmation" class="block mt-1 w-full"
-                            type="password"
-                            name="password_confirmation" required autocomplete="new-password" />
-
-            <x-input-error :messages="$errors->get('password_confirmation')" class="mt-2" />
-        </div>
-
-        <div class="flex items-center justify-end mt-4">
-            <a class="underline text-sm text-gray-600 hover:text-gray-900 rounded-md focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500" href="{{ route('login') }}">
-                {{ __('Already registered?') }}
-            </a>
-
-            <x-primary-button class="ms-4">
-                {{ __('Register') }}
-            </x-primary-button>
-        </div>
-    </form>
-</x-guest-layout>
+    </div>
+</body>
+</html>

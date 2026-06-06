@@ -10,14 +10,15 @@ return new class extends Migration
     {
         Schema::table('users', function (Blueprint $table) {
             $table->boolean('is_online')->default(false)->after('remember_token');
-            $table->timestamp('last_seen')->nullable()->after('is_online');
+            $table->timestamp('last_seen_at')->nullable()->after('is_online');
+            $table->string('avatar')->nullable()->after('last_seen_at');
         });
     }
 
     public function down(): void
     {
         Schema::table('users', function (Blueprint $table) {
-            $table->dropColumn(['is_online', 'last_seen']);
+            $table->dropColumn(['is_online', 'last_seen_at', 'avatar']);
         });
     }
 };

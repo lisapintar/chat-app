@@ -3,28 +3,38 @@
 namespace App\Models;
 
 use Illuminate\Database\Eloquent\Model;
-use Illuminate\Database\Eloquent\Relations\BelongsTo;
-use Illuminate\Database\Eloquent\Relations\BelongsToMany;
-use Illuminate\Database\Eloquent\Relations\HasMany;
 
 class Group extends Model
 {
-    protected $fillable = ['name', 'description', 'created_by'];
+    protected $fillable = [
+        'name',
+        'description',
+        'created_by',
+    ];
 
-    public function creator(): BelongsTo
+    // User yang membuat group
+    public function creator()
     {
         return $this->belongsTo(User::class, 'created_by');
     }
 
-    public function members(): BelongsToMany
+    // Semua anggota group
+    public function members()
     {
         return $this->belongsToMany(User::class, 'group_members')
                     ->withPivot('role')
                     ->withTimestamps();
     }
 
-    public function messages(): HasMany
+    // Pesan di group ini
+    public function messages()
     {
-        return $this->hasMany(Message::class, 'group_id');
+        return $this->hasMany(Message::class);
+    }
+
+    // Jumlah anggota online
+    public function getOnlineMembersCountAttribute(): int
+    {
+        return $this->members()->where('is_online', true)->count();
     }
 }

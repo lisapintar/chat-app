@@ -3,7 +3,6 @@
 namespace App\Models;
 
 use Illuminate\Database\Eloquent\Model;
-use Illuminate\Database\Eloquent\Relations\BelongsTo;
 
 class Message extends Model
 {
@@ -11,17 +10,35 @@ class Message extends Model
         'sender_id',
         'receiver_id',
         'group_id',
-        'content',
-        'type',
+        'body',
+        'read_at',
     ];
 
-    public function sender(): BelongsTo
+    protected $casts = [
+        'read_at' => 'datetime',
+    ];
+
+    // Pengirim pesan
+    public function sender()
     {
         return $this->belongsTo(User::class, 'sender_id');
     }
 
-    public function receiver(): BelongsTo
+    // Penerima (private chat)
+    public function receiver()
     {
         return $this->belongsTo(User::class, 'receiver_id');
+    }
+
+    // Group (group chat)
+    public function group()
+    {
+        return $this->belongsTo(Group::class);
+    }
+
+    // Cek apakah ini pesan group
+    public function isGroupMessage(): bool
+    {
+        return $this->group_id !== null;
     }
 }

@@ -3,260 +3,267 @@
 namespace App\Http\Controllers;
 
 use App\Events\MessageSent;
-use App\Events\UserPresenceUpdated;
+use App\Events\UserTyping;
+use App\Models\Group;
 use App\Models\Message;
 use App\Models\User;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
-use App\Models\Group;
-use App\Events\GroupMessageSent;
 
 class ChatController extends Controller
 {
-    // Tampilkan halaman chat
+    /**
+     * Halaman utama chat — tampilkan semua user & group
+     */
     public function index()
     {
-        // Set user sebagai online
-        $user = Auth::user();
-        $user->update(['is_online' => true, 'last_seen' => now()]);
-        broadcast(new UserPresenceUpdated($user->id, $user->name, true));
+        $currentUser = Auth::user();
 
-        return view('chat');
+        // Semua user kecuali diri sendiri
+        $users = User::where('id', '!=', $currentUser->id)
+                     ->orderByDesc('is_online')
+                     ->orderBy('name')
+                     ->get();
+
+        // Group yang diikuti user ini
+        $groups = $currentUser->groups()->withCount('members')->get();
+
+        return view('chat.index', compact('currentUser', 'users', 'groups'));
     }
 
-    // Ambil semua user kecuali yang sedang login
-    public function getUsers()
+    /**
+     * Ambil pesan private antara dua user (AJAX)
+     */
+    public function getPrivateMessages(Request $request, int $userId)
     {
-        $users = User::where('id', '!=', Auth::id())
-            ->select('id', 'name', 'email', 'is_online', 'last_seen')
-            ->get()
-            ->map(function ($user) {
-                return [
-                    'id' => $user->id,
-                    'name' => $user->name,
-                    'email' => $user->email,
-                    'is_online' => $user->is_online,
-                    'last_seen' => $user->last_seen,
-                    'avatar' => strtoupper(substr($user->name, 0, 1)),
-                ];
-            });
+        $currentUser = Auth::id();
+        $otherUser   = User::findOrFail($userId);
 
-        return response()->json($users);
+        $messages = Message::with('sender')
+            ->whereNull('group_id')
+            ->where(function ($q) use ($currentUser, $userId) {
+                $q->where('sender_id', $currentUser)->where('receiver_id', $userId);
+            })
+            ->orWhere(function ($q) use ($currentUser, $userId) {
+                $q->where('sender_id', $userId)->where('receiver_id', $currentUser)
+                  ->whereNull('group_id');
+            })
+            ->orderBy('created_at')
+            ->get()
+            ->map(fn($m) => $this->formatMessage($m));
+
+        // Tandai pesan yang belum dibaca sebagai sudah dibaca
+        Message::where('sender_id', $userId)
+               ->where('receiver_id', $currentUser)
+               ->whereNull('read_at')
+               ->update(['read_at' => now()]);
+
+        return response()->json([
+            'messages'   => $messages,
+            'other_user' => [
+                'id'        => $otherUser->id,
+                'name'      => $otherUser->name,
+                'initials'  => $otherUser->initials,
+                'is_online' => $otherUser->is_online,
+            ],
+        ]);
     }
 
-    // Ambil riwayat pesan antara 2 user
-    public function getMessages($userId)
+    /**
+     * Ambil pesan group (AJAX)
+     */
+    public function getGroupMessages(Request $request, int $groupId)
     {
-        $currentUserId = Auth::id();
+        $group = Group::with(['members' => function ($q) {
+            $q->orderByDesc('is_online')->orderBy('name');
+        }])->findOrFail($groupId);
 
-        $messages = Message::where(function ($query) use ($currentUserId, $userId) {
-                $query->where('sender_id', $currentUserId)
-                      ->where('receiver_id', $userId);
-            })
-            ->orWhere(function ($query) use ($currentUserId, $userId) {
-                $query->where('sender_id', $userId)
-                      ->where('receiver_id', $currentUserId);
-            })
-            ->where('type', 'private')
-            ->with('sender:id,name')
-            ->orderBy('created_at', 'asc')
+        // Pastikan user adalah anggota group
+        if (!$group->members()->where('user_id', Auth::id())->exists()) {
+            return response()->json(['error' => 'Kamu bukan anggota group ini.'], 403);
+        }
+
+        $messages = Message::with('sender')
+            ->where('group_id', $groupId)
+            ->orderBy('created_at')
             ->get()
-            ->map(function ($msg) {
-                return [
-                    'id' => $msg->id,
-                    'content' => $msg->content,
-                    'sender_id' => $msg->sender_id,
-                    'receiver_id' => $msg->receiver_id,
-                    'sender_name' => $msg->sender->name,
-                    'created_at' => $msg->created_at->toISOString(),
-                    'is_mine' => $msg->sender_id === Auth::id(),
-                ];
-            });
+            ->map(fn($m) => $this->formatMessage($m));
 
-        return response()->json($messages);
+        return response()->json([
+            'messages' => $messages,
+            'group'    => [
+                'id'             => $group->id,
+                'name'           => $group->name,
+                'members_count'  => $group->members->count(),
+                'online_count'   => $group->members->where('is_online', true)->count(),
+                'members'        => $group->members->map(fn($u) => [
+                    'id'        => $u->id,
+                    'name'      => $u->name,
+                    'initials'  => $u->initials,
+                    'is_online' => $u->is_online,
+                ]),
+            ],
+        ]);
     }
 
-    // Kirim pesan
+    /**
+     * Kirim pesan (AJAX)
+     */
     public function sendMessage(Request $request)
     {
         $request->validate([
-            'receiver_id' => 'required|exists:users,id',
-            'content' => 'required|string|max:1000',
+            'body'        => ['required', 'string', 'max:5000'],
+            'receiver_id' => ['nullable', 'integer', 'exists:users,id'],
+            'group_id'    => ['nullable', 'integer', 'exists:groups,id'],
         ]);
+
+        // Harus ada salah satu
+        if (!$request->receiver_id && !$request->group_id) {
+            return response()->json(['error' => 'Tujuan pesan tidak valid.'], 422);
+        }
+
+        // Kalau group, pastikan user adalah anggota
+        if ($request->group_id) {
+            $group = Group::findOrFail($request->group_id);
+            $isMember = $group->members()->where('user_id', Auth::id())->exists();
+            if (!$isMember) {
+                return response()->json(['error' => 'Kamu bukan anggota group ini.'], 403);
+            }
+        }
 
         $message = Message::create([
-            'sender_id' => Auth::id(),
+            'sender_id'   => Auth::id(),
             'receiver_id' => $request->receiver_id,
-            'content' => $request->content,
-            'type' => 'private',
+            'group_id'    => $request->group_id,
+            'body'        => $request->body,
         ]);
 
-        $message->load('sender');
+        // Broadcast event — ShouldBroadcastNow artinya langsung, tanpa queue
+        broadcast(new MessageSent($message));
 
-        // Broadcast event via WebSocket
-        broadcast(new MessageSent($message, Auth::user()))->toOthers();
-
-        return response()->json([
-            'id' => $message->id,
-            'content' => $message->content,
-            'sender_id' => $message->sender_id,
-            'receiver_id' => $message->receiver_id,
-            'sender_name' => $message->sender->name,
-            'created_at' => $message->created_at->toISOString(),
-            'is_mine' => true,
-        ]);
+        return response()->json($this->formatMessage($message->load('sender')));
     }
 
-    // Update status online/offline
-    public function updatePresence(Request $request)
+    /**
+     * Broadcast typing indicator (AJAX)
+     */
+    public function typing(Request $request)
     {
         $request->validate([
-            'is_online' => 'required|boolean',
+            'receiver_id' => ['nullable', 'integer'],
+            'group_id'    => ['nullable', 'integer'],
+            'is_typing'   => ['required', 'boolean'],
         ]);
 
-        $user = Auth::user();
-        $user->update([
-            'is_online' => $request->is_online,
-            'last_seen' => now(),
-        ]);
+        broadcast(new UserTyping(
+            senderId:    Auth::id(),
+            senderName:  Auth::user()->name,
+            receiverId:  $request->receiver_id,
+            groupId:     $request->group_id,
+            isTyping:    $request->boolean('is_typing')
+        ));
 
-        broadcast(new UserPresenceUpdated($user->id, $user->name, $request->is_online));
-
-        return response()->json(['success' => true]);
+        return response()->json(['ok' => true]);
     }
 
-    // Ambil daftar user yang sedang online
-    public function getOnlineUsers()
-    {
-        $users = User::where('is_online', true)
-            ->where('id', '!=', Auth::id())
-            ->pluck('id');
-
-        return response()->json($users);
-    }
-
-    // Ambil semua group milik user yang login
-    public function getGroups()
-    {
-        $groups = Auth::user()->groups()
-         ->with(['members:id,name', 'creator:id,name'])
-            ->get()
-            ->map(function ($group) {
-             return [
-                'id' => $group->id,
-                'name' => $group->name,
-                'description' => $group->description,
-                'created_by' => $group->created_by,
-                'creator_name' => $group->creator->name,
-                'member_count' => $group->members->count(),
-                'members' => $group->members->map(fn($m) => [
-                    'id' => $m->id,
-                    'name' => $m->name,
-                    'avatar' => strtoupper(substr($m->name, 0, 1)),
-                ]),
-                'avatar' => strtoupper(substr($group->name, 0, 1)),
-            ];
-        });
-
-    return response()->json($groups);
-    }
-
-    // Buat group baru
+    /**
+     * Buat group baru (AJAX)
+     */
     public function createGroup(Request $request)
     {
-     $request->validate([
-        'name' => 'required|string|max:100',
-        'member_ids' => 'required|array|min:1',
-        'member_ids.*' => 'exists:users,id',
-    ]);
+        $request->validate([
+            'name'        => ['required', 'string', 'max:255'],
+            'member_ids'  => ['required', 'array', 'min:1'],
+            'member_ids.*'=> ['integer', 'exists:users,id'],
+        ]);
 
-    $group = Group::create([
-        'name' => $request->name,
-        'description' => $request->description ?? null,
-        'created_by' => Auth::id(),
-    ]);
+        $group = Group::create([
+            'name'       => $request->name,
+            'created_by' => Auth::id(),
+        ]);
 
-    // Tambah creator sebagai admin
-    $group->members()->attach(Auth::id(), ['role' => 'admin']);
+        // Tambah creator sebagai admin
+        $group->members()->attach(Auth::id(), ['role' => 'admin']);
 
-    // Tambah member lain
-    foreach ($request->member_ids as $memberId) {
-        if ($memberId != Auth::id()) {
-            $group->members()->attach($memberId, ['role' => 'member']);
+        // Tambah anggota lain sebagai member
+        foreach ($request->member_ids as $memberId) {
+            if ($memberId != Auth::id()) {
+                $group->members()->attach($memberId, ['role' => 'member']);
+            }
         }
+
+        return response()->json([
+            'id'   => $group->id,
+            'name' => $group->name,
+            'members_count' => $group->members()->count(),
+        ]);
     }
 
-    return response()->json([
-        'id' => $group->id,
-        'name' => $group->name,
-        'member_count' => count($request->member_ids) + 1,
-        'avatar' => strtoupper(substr($group->name, 0, 1)),
-    ]);
-    }
-
-    // Ambil pesan group
-    public function getGroupMessages($groupId)
+    /**
+     * Set user offline — dipanggil saat browser ditutup via sendBeacon
+     */
+    public function setOffline(Request $request)
     {
-    // Pastikan user adalah member group
-    $isMember = Auth::user()->groups()->where('groups.id', $groupId)->exists();
-    if (!$isMember) {
-        return response()->json(['error' => 'Unauthorized'], 403);
+        $user = Auth::user();
+        if ($user) {
+            $user->update(['is_online' => false, 'last_seen_at' => now()]);
+            broadcast(new \App\Events\UserPresenceChanged($user, 'offline'));
+        }
+        return response()->json(['ok' => true]);
     }
 
-    $messages = Message::where('group_id', $groupId)
-        ->where('type', 'group')
-        ->with('sender:id,name')
-        ->orderBy('created_at', 'asc')
-        ->get()
-        ->map(function ($msg) {
-            return [
-                'id' => $msg->id,
-                'content' => $msg->content,
-                'sender_id' => $msg->sender_id,
-                'group_id' => $msg->group_id,
-                'sender_name' => $msg->sender->name,
-                'created_at' => $msg->created_at->toISOString(),
-                'is_mine' => $msg->sender_id === Auth::id(),
-            ];
-        });
-
-    return response()->json($messages);
-    }
-
-    // Kirim pesan ke group
-    public function sendGroupMessage(Request $request)
+    /**
+     * Heartbeat — update last_seen_at setiap 30 detik
+     * Jika last_seen_at lebih dari 2 menit yang lalu, user dianggap offline
+     */
+    public function heartbeat(Request $request)
     {
-    $request->validate([
-        'group_id' => 'required|exists:groups,id',
-        'content' => 'required|string|max:1000',
-    ]);
+        $user = Auth::user();
+        if ($user) {
+            $wasOffline = !$user->is_online;
+            $user->update(['is_online' => true, 'last_seen_at' => now()]);
 
-    // Pastikan user adalah member
-    $isMember = Auth::user()->groups()->where('groups.id', $request->group_id)->exists();
-    if (!$isMember) {
-        return response()->json(['error' => 'Unauthorized'], 403);
+            // Broadcast online jika sebelumnya offline (misal reconnect)
+            if ($wasOffline) {
+                broadcast(new \App\Events\UserPresenceChanged($user, 'online'));
+            }
+        }
+        return response()->json(['ok' => true]);
     }
 
-    $message = Message::create([
-        'sender_id' => Auth::id(),
-        'group_id' => $request->group_id,
-        'content' => $request->content,
-        'type' => 'group',
-    ]);
+    /**
+     * Hitung unread messages untuk sidebar badge
+     */
+    public function unreadCounts()
+    {
+        $userId = Auth::id();
 
-    $message->load('sender');
+        // Unread per private conversation
+        $privateUnread = Message::whereNull('group_id')
+            ->where('receiver_id', $userId)
+            ->whereNull('read_at')
+            ->selectRaw('sender_id, COUNT(*) as count')
+            ->groupBy('sender_id')
+            ->pluck('count', 'sender_id');
 
-    broadcast(new GroupMessageSent($message, Auth::user()))->toOthers();
-
-    return response()->json([
-        'id' => $message->id,
-        'content' => $message->content,
-        'sender_id' => $message->sender_id,
-        'group_id' => $message->group_id,
-        'sender_name' => $message->sender->name,
-        'created_at' => $message->created_at->toISOString(),
-        'is_mine' => true,
-    ]);
+        return response()->json(['private' => $privateUnread]);
     }
 
+    // Helper format pesan untuk response JSON
+    private function formatMessage(Message $m): array
+    {
+        return [
+            'id'          => $m->id,
+            'body'        => $m->body,
+            'sender_id'   => $m->sender_id,
+            'receiver_id' => $m->receiver_id,
+            'group_id'    => $m->group_id,
+            'created_at'  => $m->created_at->format('H:i'),
+            'sender'      => [
+                'id'       => $m->sender->id,
+                'name'     => $m->sender->name,
+                'initials' => $m->sender->initials,
+            ],
+        ];
+    }
 }
